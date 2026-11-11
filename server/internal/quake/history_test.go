@@ -66,3 +66,57 @@ func TestHistoryUpstreamFailure(t *testing.T) {
 		t.Fatal("expected upstream failure")
 	}
 }
+
+func emptyCatalog() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/count" {
+			w.Write([]byte("0"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"metadata":{"count":0},"features":[]}`))
+	}))
+}
+
+func historyQuery(startSeconds int64) HistoryQuery {
+	return HistoryQuery{Start: time.Unix(startSeconds, 0).UTC(), End: time.Unix(startSeconds+60, 0).UTC(), MinMagnitude: 2.5, Limit: 1}
+}
+
+func TestHistoryCacheDropsExpiredEntries(t *testing.T) {
+	ts := emptyCatalog()
+	defer ts.Close()
+	// A negative TTL makes every stored result unusable on arrival, so each
+	// query must find room by evicting what it can no longer serve.
+	s := NewHistoryService(ts.Client(), ts.URL, -time.Second)
+	for i := int64(0); i < 5; i++ {
+		if _, err := s.Query(context.Background(), historyQuery(i*600)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.mu.Lock()
+	cached := len(s.cache)
+	s.mu.Unlock()
+	if cached != 1 {
+		t.Fatalf("expired results retained: %d entries", cached)
+	}
+}
+
+func TestHistoryCacheStaysBounded(t *testing.T) {
+	ts := emptyCatalog()
+	defer ts.Close()
+	s := NewHistoryService(ts.Client(), ts.URL, time.Hour)
+	for i := int64(0); i < MaxHistoryCacheEntries+16; i++ {
+		if _, err := s.Query(context.Background(), historyQuery(i*600)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.mu.Lock()
+	cached := len(s.cache)
+	s.mu.Unlock()
+	if cached > MaxHistoryCacheEntries {
+		t.Fatalf("cache grew past its cap: %d entries", cached)
+	}
+	if cached != MaxHistoryCacheEntries {
+		t.Fatalf("cache evicted more than it had to: %d entries", cached)
+	}
+}

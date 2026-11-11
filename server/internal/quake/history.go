@@ -83,6 +83,13 @@ type historyEntry struct {
 	result  HistoryResult
 	expires time.Time
 }
+
+// MaxHistoryCacheEntries bounds how many query results the history cache holds.
+// Every distinct start, end, magnitude and limit combination is a separate key
+// and all four come from the request, so the number of keys is set by clients
+// rather than by the catalog: without a bound the map only grows.
+const MaxHistoryCacheEntries = 256
+
 type HistoryService struct {
 	client *http.Client
 	base   string
@@ -97,8 +104,9 @@ func NewHistoryService(client *http.Client, base string, ttl time.Duration) *His
 
 func (s *HistoryService) Query(ctx context.Context, q HistoryQuery) (HistoryResult, error) {
 	key := HistoryURL(s.base, q)
+	now := time.Now()
 	s.mu.Lock()
-	if e, ok := s.cache[key]; ok && time.Now().Before(e.expires) {
+	if e, ok := s.cache[key]; ok && now.Before(e.expires) {
 		s.mu.Unlock()
 		return e.result, nil
 	}
@@ -130,7 +138,30 @@ func (s *HistoryService) Query(ctx context.Context, q HistoryQuery) (HistoryResu
 		result.Suggestion = "Increase the minimum magnitude or select a shorter time range to view a more complete result."
 	}
 	s.mu.Lock()
-	s.cache[key] = historyEntry{result: result, expires: time.Now().Add(s.ttl)}
+	s.store(key, historyEntry{result: result, expires: time.Now().Add(s.ttl)})
 	s.mu.Unlock()
 	return result, nil
+}
+
+// store records a result and keeps the map from growing without bound: entries
+// that can no longer be reused are dropped first, then the entry closest to
+// expiry makes room when the cap is reached. The caller holds s.mu.
+func (s *HistoryService) store(key string, entry historyEntry) {
+	now := time.Now()
+	for k, cached := range s.cache {
+		if !now.Before(cached.expires) {
+			delete(s.cache, k)
+		}
+	}
+	if _, cached := s.cache[key]; !cached && len(s.cache) >= MaxHistoryCacheEntries {
+		oldestKey := ""
+		var oldestExpiry time.Time
+		for k, cached := range s.cache {
+			if oldestKey == "" || cached.expires.Before(oldestExpiry) {
+				oldestKey, oldestExpiry = k, cached.expires
+			}
+		}
+		delete(s.cache, oldestKey)
+	}
+	s.cache[key] = entry
 }
