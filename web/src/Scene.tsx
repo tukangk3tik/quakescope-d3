@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { Html, Line, OrbitControls, Stars } from "@react-three/drei";
 import Globe from "r3f-globe";
 import {
@@ -12,6 +12,8 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshPhongMaterial,
+  SRGBColorSpace,
+  TextureLoader,
 } from "three";
 import type { OrbitControls as Controls } from "three-stdlib";
 import { depthColor, markerSize, position, type Event } from "./earthquake";
@@ -19,6 +21,7 @@ import { useExplorer } from "./store";
 import { loadBoundaries, type BoundaryPath } from "./tectonics";
 import { hypocenterPosition } from "./interior";
 import { equatorPoints } from "./equator";
+import { calculateSunDirection, illuminationTimestamp, isDynamicIlluminationActive } from "./solar";
 function Camera() {
   const controls = useRef<Controls>(null);
   const { camera } = useThree();
@@ -185,7 +188,76 @@ function Earth({ events }: { events: Event[] }) {
   const selectedBoundary = useExplorer((s) => s.selectedBoundary);
   const set = useExplorer((s) => s.set);
   const interior = useExplorer((s) => s.interiorMode);
+  const dynamicDayNight = useExplorer((s) => s.dynamicDayNight);
+  const cityLights = useExplorer((s) => s.cityLights);
+  const mode = useExplorer((s) => s.mode);
+  const currentTime = useExplorer((s) => s.currentTime);
+  const nightTexture = useLoader(TextureLoader, "/earth-night.jpg");
   const globeMaterial = useRef(new MeshPhongMaterial());
+  const sunDirection = useRef(new Vector3(0, 0, 1));
+  const illuminationEnabled = useRef({ value: 1 });
+  const cityLightsEnabled = useRef({ value: 1 });
+  const sunUniform = useRef({ value: sunDirection.current });
+  const nightUniform = useRef({ value: nightTexture });
+  useEffect(() => {
+    const updateSun = () => {
+      const sun = calculateSunDirection(illuminationTimestamp(mode, currentTime));
+      sunDirection.current.set(sun.x, sun.y, sun.z);
+    };
+    updateSun();
+    if (mode !== "live") return;
+    const timer = window.setInterval(updateSun, 30_000);
+    return () => window.clearInterval(timer);
+  }, [mode, currentTime]);
+
+  useEffect(() => {
+    illuminationEnabled.current.value = isDynamicIlluminationActive(dynamicDayNight, interior) ? 1 : 0;
+    cityLightsEnabled.current.value = cityLights ? 1 : 0;
+  }, [dynamicDayNight, cityLights, interior]);
+
+  useEffect(() => {
+    nightTexture.colorSpace = SRGBColorSpace;
+    const material = globeMaterial.current;
+    material.onBeforeCompile = (shader) => {
+      shader.uniforms.qsSunDirection = sunUniform.current;
+      shader.uniforms.qsNightMap = nightUniform.current;
+      shader.uniforms.qsIlluminationEnabled = illuminationEnabled.current;
+      shader.uniforms.qsCityLightsEnabled = cityLightsEnabled.current;
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nvarying vec3 qsSurfaceNormal;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nqsSurfaceNormal = normalize(position);");
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          "#include <common>\nvarying vec3 qsSurfaceNormal;\nuniform vec3 qsSunDirection;\nuniform sampler2D qsNightMap;\nuniform float qsIlluminationEnabled;\nuniform float qsCityLightsEnabled;",
+        )
+        .replace(
+          "#include <map_fragment>",
+          `#ifdef USE_MAP
+            vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+            #ifdef DECODE_VIDEO_TEXTURE
+              sampledDiffuseColor = sRGBTransferEOTF(sampledDiffuseColor);
+            #endif
+            vec3 nightSample = texture2D(qsNightMap, vMapUv).rgb;
+            float solarIncidence = dot(normalize(qsSurfaceNormal), normalize(qsSunDirection));
+            float daylight = smoothstep(-0.14, 0.18, solarIncidence);
+            float twilight = 1.0 - smoothstep(0.0, 0.18, abs(solarIncidence));
+            vec3 darkGeography = sampledDiffuseColor.rgb * 0.065;
+            vec3 artificialLight = nightSample * nightSample * 1.7 * qsCityLightsEnabled;
+            vec3 nightColor = darkGeography + artificialLight;
+            vec3 illuminatedColor = mix(nightColor, sampledDiffuseColor.rgb, daylight);
+            illuminatedColor += vec3(0.025, 0.055, 0.085) * twilight;
+            vec3 finalMap = mix(sampledDiffuseColor.rgb, illuminatedColor, qsIlluminationEnabled);
+            diffuseColor *= vec4(finalMap, sampledDiffuseColor.a);
+          #endif`,
+        );
+    };
+    material.customProgramCacheKey = () => "quakescope-day-night-v1";
+    material.needsUpdate = true;
+    return () => {
+      material.onBeforeCompile = () => {};
+    };
+  }, [nightTexture]);
   useEffect(() => {
     const material = globeMaterial.current;
     material.transparent = interior;

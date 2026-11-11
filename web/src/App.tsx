@@ -198,6 +198,14 @@ export default function App() {
           <input type="checkbox" checked={s.equator} onChange={(e) => s.set({ equator: e.target.checked })} />{" "}
           Equator
         </label>
+        <label className="toggle">
+          <input type="checkbox" checked={s.dynamicDayNight} onChange={(e) => s.set({ dynamicDayNight: e.target.checked })} />{" "}
+          Dynamic Day/Night
+        </label>
+        <label className={`toggle${!s.dynamicDayNight ? " inactive" : ""}`}>
+          <input type="checkbox" checked={s.cityLights} disabled={!s.dynamicDayNight} onChange={(e) => s.set({ cityLights: e.target.checked })} />{" "}
+          City Lights {!s.dynamicDayNight && <small>(inactive)</small>}
+        </label>
         {s.interiorMode && <>
           <label>Hypocenter visualization</label>
           <div className="segments" aria-label="Hypocenter depth scale">
@@ -434,7 +442,7 @@ export default function App() {
           <a href="https://github.com/fraxen/tectonicplates">
             PB2002 / Bird 2003
           </a>{" "}
-          · IMAGERY: NASA BLUE MARBLE
+          · IMAGERY: NASA BLUE MARBLE + BLACK MARBLE
         </span>
         <span>
           Data may be delayed or revised. Not an early-warning system.

@@ -12,6 +12,8 @@ type State = {
   tectonicError: string | null;
   equator: boolean;
   interiorMode: boolean;
+  dynamicDayNight: boolean;
+  cityLights: boolean;
   depthScale: DepthScale;
   selected: Event | null;
   selectedBoundary: BoundaryPath | null;
@@ -38,6 +40,8 @@ export const useExplorer = create<State & { set: (v: Partial<State>) => void }>(
     tectonicError: null,
     equator: false,
     interiorMode: false,
+    dynamicDayNight: true,
+    cityLights: true,
     depthScale: "true",
     selected: null,
     selectedBoundary: null,

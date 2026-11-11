@@ -68,3 +68,13 @@ test("interior controls remain independent from live and replay state", () => {
   expect(useExplorer.getState().depthScale).toBe("enhanced");
   useExplorer.getState().set({ interiorMode: false, depthScale: "true" });
 });
+test("day/night controls default on and retain the city-light preference", () => {
+  useExplorer.setState({ dynamicDayNight: true, cityLights: true, interiorMode: false });
+  expect(useExplorer.getState().dynamicDayNight).toBe(true);
+  expect(useExplorer.getState().cityLights).toBe(true);
+  useExplorer.getState().set({ dynamicDayNight: false });
+  expect(useExplorer.getState().cityLights).toBe(true);
+  useExplorer.getState().set({ interiorMode: true });
+  expect(useExplorer.getState().dynamicDayNight).toBe(false);
+  useExplorer.setState({ dynamicDayNight: true, cityLights: true, interiorMode: false });
+});

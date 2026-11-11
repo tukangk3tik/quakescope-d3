@@ -36,3 +36,21 @@ test("API results support DOM selection and filter requests", async () => {
  expect(calls.some(url=>url.includes("source=bmkg"))).toBe(true);
  client.clear();
 });
+
+test("day/night and city-light controls preserve the city-light preference", async () => {
+ vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+ useExplorer.setState({dynamicDayNight:true,cityLights:true});
+ vi.stubGlobal("fetch", async () => ({ok:true,json:async()=>({events:[],total:0,returned:0,truncated:false,freshness:[]})}));
+ const client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:0}}});
+ const container=document.createElement("div");document.body.append(container);root=createRoot(container);
+ await act(async()=>{root!.render(<QueryClientProvider client={client}><App/></QueryClientProvider>);});
+ const toggles=Array.from(container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+ const dayNight=toggles.find(input=>input.parentElement?.textContent?.includes("Dynamic Day/Night"))!;
+ const lights=toggles.find(input=>input.parentElement?.textContent?.includes("City Lights"))!;
+ expect(dayNight.checked).toBe(true); expect(lights.checked).toBe(true); expect(lights.disabled).toBe(false);
+ await act(async()=>dayNight.click());
+ expect(lights.disabled).toBe(true); expect(useExplorer.getState().cityLights).toBe(true);
+ await act(async()=>dayNight.click());
+ expect(lights.disabled).toBe(false); expect(lights.checked).toBe(true);
+ client.clear();
+});
